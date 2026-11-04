@@ -1,0 +1,1530 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Excel 編輯器</title>
+<meta name="theme-color" content="#1c7a4b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<script src="lib/xlsx.full.min.js"></script>
+<script src="lib/exceljs.min.js"></script>
+<style>
+/* Layout: one-screen tool. Header + toolbar + formula bar on top, scrolling grid in the middle, sheet tabs + status at the bottom. */
+:root{
+  --bg:#f2f5f3;
+  --surface:#ffffff;
+  --head:#e8ede9;
+  --head-sel:#cfe6d8;
+  --line:#d9dfdb;
+  --line-strong:#b9c4bd;
+  --fg:#18221d;
+  --muted:#5a6a61;
+  --accent:#1c7a4b;
+  --accent-fg:#ffffff;
+  --accent-soft:rgba(28,122,75,.10);
+  --note-bg:#fff4d6;
+  --note-fg:#5c4400;
+  --note-line:#ecd68a;
+  --danger:#b3261e;
+  --font-ui:"IBM Plex Sans","Noto Sans TC",system-ui,-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#111614; --surface:#171d1a; --head:#202824; --head-sel:#2c4437;
+    --line:#29332e; --line-strong:#3a4740; --fg:#e3eae6; --muted:#97a69d;
+    --accent:#4cc58a; --accent-fg:#06230f; --accent-soft:rgba(76,197,138,.14);
+    --note-bg:#3a3010; --note-fg:#f0dca0; --note-line:#6b5a1f; --danger:#ff8a80;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111614; --surface:#171d1a; --head:#202824; --head-sel:#2c4437;
+  --line:#29332e; --line-strong:#3a4740; --fg:#e3eae6; --muted:#97a69d;
+  --accent:#4cc58a; --accent-fg:#06230f; --accent-soft:rgba(76,197,138,.14);
+  --note-bg:#3a3010; --note-fg:#f0dca0; --note-line:#6b5a1f; --danger:#ff8a80;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{color-scheme:light}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:14px/1.45 var(--font-ui);
+  padding-block:12px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+}
+.app{height:100%; display:flex; flex-direction:column; gap:8px; min-height:0}
+:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+
+.top{display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px}
+h1{font-size:16px; font-weight:600; margin:0; letter-spacing:.01em}
+.file{display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 180px; color:var(--muted)}
+.file b{color:var(--fg); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+.dirty{font-size:12px; color:var(--danger); white-space:nowrap}
+.actions{display:flex; gap:6px; flex-wrap:wrap}
+
+.btn{
+  font:inherit; font-size:13px; padding:6px 11px; border:1px solid var(--line-strong);
+  background:var(--surface); color:var(--fg); border-radius:6px; cursor:pointer; white-space:nowrap;
+}
+.btn:hover:not(:disabled){background:var(--head)}
+.btn:disabled{opacity:.45; cursor:default}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:var(--accent-fg); font-weight:500}
+.btn.primary:hover:not(:disabled){background:var(--accent); filter:brightness(1.08)}
+
+.tools{display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; align-items:center}
+.tools .btn{flex:none}
+.tools .sep{width:1px; align-self:stretch; background:var(--line-strong); margin:3px 4px; flex:none}
+
+.note{
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; padding:8px 12px;
+  border:1px solid var(--note-line); background:var(--note-bg); color:var(--note-fg);
+  border-radius:6px; font-size:13px;
+}
+.note span{flex:1 1 240px; min-width:0}
+.note .btn{background:transparent; color:inherit; border-color:var(--note-line)}
+.note .btn.primary{background:var(--accent); color:var(--accent-fg); border-color:var(--accent)}
+
+.fbar{display:flex; align-items:stretch; border:1px solid var(--line-strong); background:var(--surface); border-radius:6px; overflow:hidden}
+.fbar:focus-within{outline:2px solid var(--accent); outline-offset:0}
+.addr{font-family:var(--font-mono); font-size:12.5px; min-width:64px; padding:6px 10px; background:var(--head); border-right:1px solid var(--line-strong); text-align:center}
+.fxl{font-family:var(--font-mono); font-size:12.5px; color:var(--muted); padding:6px 8px 6px 10px; font-style:italic}
+#fx{flex:1; min-width:0; border:0; padding:6px 10px 6px 0; font:inherit; background:transparent; color:var(--fg)}
+#fx:focus{outline:none}
+
+.gridwrap{
+  flex:1; min-height:0; overflow:auto; background:var(--surface);
+  border:1px solid var(--line-strong); border-radius:6px; position:relative;
+  scroll-padding:30px 50px; outline:none; user-select:none; -webkit-user-select:none;
+}
+.gridwrap.drop{outline:2px dashed var(--accent); outline-offset:-3px}
+.gridwrap:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+table{border-collapse:separate; border-spacing:0; table-layout:fixed; font-variant-numeric:tabular-nums}
+th,td{height:auto; padding:0; border-right:1px solid var(--line); border-bottom:1px solid var(--line)}
+th{
+  background:var(--head); color:var(--muted); font-weight:500; font-size:12px; text-align:center;
+  border-right-color:var(--line-strong); border-bottom-color:var(--line-strong);
+  user-select:none; cursor:pointer;
+}
+thead th{position:sticky; top:0; z-index:4; font-family:var(--font-mono)}
+.rh{position:sticky; left:0; z-index:2; font-family:var(--font-mono)}
+.corner{position:sticky; left:0; top:0; z-index:5; cursor:default}
+th.on{background:var(--head-sel); color:var(--fg)}
+td{
+  padding:0 7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-size:13px; line-height:1.25; cursor:cell; background:var(--surface);
+}
+td.n{text-align:right}
+td.p{color:var(--muted); font-style:italic}
+td.x{color:var(--danger); text-align:center}
+td.b{text-align:center}
+td.rg{
+  background-image:linear-gradient(var(--accent-soft),var(--accent-soft));
+  box-shadow:
+    inset 0 var(--t,0px) 0 0 var(--accent),
+    inset 0 calc(var(--b,0px) * -1) 0 0 var(--accent),
+    inset var(--l,0px) 0 0 0 var(--accent),
+    inset calc(var(--r,0px) * -1) 0 0 0 var(--accent);
+}
+td.rt{--t:2px} td.rb{--b:2px} td.rl{--l:2px} td.rr{--r:2px}
+td.sel{outline:2px solid var(--accent); outline-offset:-2px; background-image:linear-gradient(var(--accent-soft),var(--accent-soft))}
+td.sel.rg{background-image:none}
+table.fx td{font-size:14.67px; vertical-align:bottom}
+table.ng td{border-right-color:transparent; border-bottom-color:transparent}
+td.editing{
+  text-overflow:clip; cursor:text; user-select:text; -webkit-user-select:text;
+  outline:2px solid var(--accent); outline-offset:-2px; background:var(--surface); text-align:left;
+}
+td.editing:focus{outline:2px solid var(--accent)}
+.morewrap{padding:10px 0 12px}
+.more{position:sticky; left:12px}
+
+.foot{display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; justify-content:space-between}
+.tabs{display:flex; gap:4px; overflow-x:auto; max-width:100%; padding-bottom:2px}
+.tab{
+  font:inherit; font-size:13px; padding:5px 13px; border:1px solid var(--line-strong);
+  background:var(--surface); color:var(--fg); border-radius:6px; cursor:pointer; white-space:nowrap; flex:none;
+}
+.tab:hover{background:var(--head)}
+.tab[aria-current="true"]{background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:500}
+.status{font-size:12.5px; color:var(--muted); min-width:0}
+
+@media (max-width:560px){
+  .btn{padding:6px 9px}
+  .actions{width:100%}
+}
+@media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto!important} }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <h1>Excel 編輯器</h1>
+    <div class="file"><b id="fileName">—</b><span class="dirty" id="dirty" hidden>● 未儲存</span></div>
+    <div class="actions">
+      <button class="btn" id="btnOpen" type="button">開啟檔案</button>
+      <button class="btn" id="btnNew" type="button">新增空白檔</button>
+      <button class="btn primary" id="btnSave" type="button">儲存 .xlsx</button>
+      <button class="btn" id="btnCsv" type="button">匯出 CSV</button>
+    </div>
+  </header>
+
+  <div class="tools" role="toolbar" aria-label="編輯工具">
+    <button class="btn" id="btnUndo" type="button" disabled>復原</button>
+    <span class="sep"></span>
+    <button class="btn" data-act="insRow" type="button" title="在選取列上方插入列(選幾列就插幾列)">插入列</button>
+    <button class="btn" data-act="delRow" type="button" title="刪除選取的所有列">刪除列</button>
+    <button class="btn" data-act="insCol" type="button" title="在選取欄左方插入欄(選幾欄就插幾欄)">插入欄</button>
+    <button class="btn" data-act="delCol" type="button" title="刪除選取的所有欄">刪除欄</button>
+  </div>
+
+  <div class="note" id="note" hidden></div>
+
+  <div class="fbar">
+    <span class="addr" id="addr">A1</span>
+    <span class="fxl">fx</span>
+    <input id="fx" type="text" autocomplete="off" spellcheck="false" aria-label="儲存格內容">
+  </div>
+
+  <div class="gridwrap" id="wrap" tabindex="0" aria-label="試算表">
+    <table id="grid"></table>
+    <div class="morewrap" id="moreWrap"></div>
+  </div>
+
+  <footer class="foot">
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <div class="status" id="status" aria-live="polite"></div>
+  </footer>
+</div>
+<input type="file" id="picker" accept=".xlsx,.xlsm,.xls,.ods,.csv,.tsv,.txt" hidden>
+
+<script>
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+var el = {
+  app:$('app'), grid:$('grid'), wrap:$('wrap'), more:$('moreWrap'), tabs:$('tabs'), status:$('status'),
+  addr:$('addr'), fx:$('fx'), name:$('fileName'), dirty:$('dirty'), note:$('note'), picker:$('picker'),
+  save:$('btnSave'), csv:$('btnCsv'), undo:$('btnUndo')
+};
+if(!window.XLSX){
+  el.status.textContent = '無法載入試算表元件,請檢查網絡連線後重新整理頁面。';
+  return;
+}
+var U = XLSX.utils, SSF = XLSX.SSF;
+
+/* ---------- state ---------- */
+var wb=null, cur='', fileName='', sel={r:0,c:0}, dirty=false, undoStack=[], view={};
+var editing=null, dl=null, fileHandle=null, fxOrig='', fxCell=null, unsup=0, statusTimer=null;
+var ext={r:0,c:0}, drag=null, dragTimer=null, lastPt=null;
+var xstab=[], xsmap=new Map(), xscss=[], themeHex=null;
+var XLSX_MIME='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+var MAXC=200;
+
+/* ---------- helpers ---------- */
+function esc(s){ return String(s).replace(/[&<>"]/g,function(ch){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]; }); }
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function addrOf(r,c){ return U.encode_cell({r:r,c:c}); }
+function curSheet(){ return wb.Sheets[cur]; }
+function safeFmt(z,v){ try{ return SSF.format(z,v); }catch(e){ return String(v); } }
+function baseName(){ return (fileName||'未命名').replace(/\.[^.]+$/,''); }
+function isDateFmt(z){
+  return typeof z==='string' && /[ymdhs]/i.test(z.replace(/\[[^\]]*\]|"[^"]*"|\\./g,''));
+}
+
+/* ---------- cell text <-> value ---------- */
+function fmtVal(cell){
+  if(cell.t==='n') return cell.z ? safeFmt(cell.z,cell.v) : String(+Number(cell.v).toPrecision(12));
+  if(cell.t==='b') return cell.v?'TRUE':'FALSE';
+  return String(cell.v);
+}
+function display(cell){
+  if(!cell) return '';
+  if(cell.w!==undefined && cell.w!==null) return String(cell.w);
+  if(cell.t==='e') return '#ERR';
+  if(cell.v!==undefined && cell.v!==null) return fmtVal(cell);
+  if(cell.f) return '='+cell.f;
+  return '';
+}
+function raw(cell){
+  if(!cell) return '';
+  if(cell.f) return '='+cell.f;
+  if(cell.t==='n'){
+    if(isDateFmt(cell.z) && cell.w) return String(cell.w);
+    return String(+Number(cell.v).toPrecision(15));
+  }
+  if(cell.t==='b') return cell.v?'TRUE':'FALSE';
+  if(cell.t==='e') return cell.w||'';
+  return (cell.v===undefined||cell.v===null) ? '' : String(cell.v);
+}
+function finalize(cell){
+  if(cell.t==='n') cell.w = cell.z ? safeFmt(cell.z,cell.v) : String(+Number(cell.v).toPrecision(12));
+  else if(cell.t==='b') cell.w = cell.v?'TRUE':'FALSE';
+  else delete cell.w;
+}
+function parseInput(text, prev){
+  if(text==='') return null;
+  if(text.charAt(0)==='=' && text.length>1) return {t:'n', f:text.slice(1)};
+  var tr = text.trim();
+  if(prev && prev.t==='n' && isDateFmt(prev.z)){
+    var m = tr.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+    if(m){
+      var y=+m[1], mo=+m[2], d=+m[3], dt=new Date(Date.UTC(y,mo-1,d));
+      if(dt.getUTCMonth()===mo-1 && dt.getUTCDate()===d){
+        return {t:'n', v:Math.round((dt.getTime()-Date.UTC(1899,11,30))/864e5), z:prev.z};
+      }
+    }
+  }
+  var numTxt = tr.replace(/^([-+]?\d{1,3})((?:,\d{3})+)(\.\d+)?$/, function(_,a,b,c){ return a+b.replace(/,/g,'')+(c||''); });
+  if(/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(numTxt) && !/^[-+]?0\d/.test(numTxt) && numTxt.replace(/\D/g,'').length<=15){
+    var out={t:'n', v:Number(numTxt)};
+    if(prev && prev.t==='n' && prev.z) out.z=prev.z;
+    return out;
+  }
+  if(/^(true|false)$/i.test(tr)) return {t:'b', v:tr.toLowerCase()==='true'};
+  return {t:'s', v:text};
+}
+
+/* ---------- formula engine (common functions only) ---------- */
+var ERR={'#DIV/0!':7,'#VALUE!':15,'#REF!':23,'#NAME?':29,'#NUM!':36};
+var astCache=new Map();
+function tokenize(src){
+  var re=/\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+)|"((?:[^"]|"")*)"|(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)(?![A-Za-z0-9_(!.])|([A-Za-z_][A-Za-z0-9_.]*)(?=\()|(<=|>=|<>|[-+*\/^&=<>(),%])|(TRUE|FALSE)(?![A-Za-z0-9_(])|(\S))/iy;
+  var toks=[], i=0;
+  while(i<src.length){
+    re.lastIndex=i;
+    var m=re.exec(src);
+    if(!m){ if(/^\s*$/.test(src.slice(i))) break; throw new Error('tok'); }
+    i=re.lastIndex;
+    if(m[1]!==undefined) toks.push({t:'num',v:parseFloat(m[1])});
+    else if(m[2]!==undefined) toks.push({t:'str',v:m[2].replace(/""/g,'"')});
+    else if(m[3]) toks.push({t:'ref',v:m[3]});
+    else if(m[4]) toks.push({t:'fn',v:m[4].toUpperCase()});
+    else if(m[5]) toks.push({t:'op',v:m[5]});
+    else if(m[6]) toks.push({t:'bool',v:m[6].toUpperCase()==='TRUE'});
+    else throw new Error('bad');
+  }
+  return toks;
+}
+function parseF(src){
+  if(astCache.has(src)) return astCache.get(src);
+  var toks=tokenize(src), p=0;
+  function isOp(){ var t=toks[p]; if(!t||t.t!=='op') return false; for(var i=0;i<arguments.length;i++) if(arguments[i]===t.v) return true; return false; }
+  function expr(){ var l=add(); while(isOp('=','<>','<','>','<=','>=')){ var op=toks[p++].v; l={k:'bin',op:op,l:l,r:add()}; } return l; }
+  function add(){ var l=mul(); while(isOp('+','-','&')){ var op=toks[p++].v; l={k:'bin',op:op,l:l,r:mul()}; } return l; }
+  function mul(){ var l=pow(); while(isOp('*','/')){ var op=toks[p++].v; l={k:'bin',op:op,l:l,r:pow()}; } return l; }
+  function pow(){ var b=unary(); while(isOp('^')){ p++; b={k:'bin',op:'^',l:b,r:unary()}; } return b; }
+  function unary(){ if(isOp('-','+')){ var op=toks[p++].v; return {k:'un',op:op,x:unary()}; } return post(); }
+  function post(){ var v=atom(); while(isOp('%')){ p++; v={k:'pct',x:v}; } return v; }
+  function atom(){
+    var t=toks[p++];
+    if(!t) throw new Error('eof');
+    if(t.t==='num'||t.t==='str'||t.t==='bool') return {k:'lit',v:t.v};
+    if(t.t==='ref'){
+      var parts=t.v.replace(/\$/g,'').toUpperCase().split(':');
+      return parts.length===2 ? {k:'range',a:parts[0],b:parts[1]} : {k:'ref',a:parts[0]};
+    }
+    if(t.t==='fn'){
+      if(!isOp('(')) throw new Error('fn');
+      p++;
+      var args=[];
+      if(isOp(')')){ p++; }
+      else { for(;;){ args.push(expr()); if(isOp(',')){ p++; continue; } if(isOp(')')){ p++; break; } throw new Error('args'); } }
+      return {k:'fn',n:t.v,args:args};
+    }
+    if(t.t==='op' && t.v==='('){ var e=expr(); if(!isOp(')')) throw new Error('paren'); p++; return e; }
+    throw new Error('atom');
+  }
+  var ast=expr();
+  if(p<toks.length) throw new Error('trailing');
+  astCache.set(src,ast);
+  return ast;
+}
+function makeEval(cellVal){
+  function vErr(m){ return {err:m}; }
+  function num(v){
+    if(Array.isArray(v)) throw new Error('array');
+    if(v===null||v===undefined||v==='') return 0;
+    if(typeof v==='number') return v;
+    if(typeof v==='boolean') return v?1:0;
+    var t=String(v).trim();
+    if(t!=='' && isFinite(Number(t))) return Number(t);
+    throw vErr('#VALUE!');
+  }
+  function str(v){
+    if(Array.isArray(v)) throw new Error('array');
+    if(v===null||v===undefined) return '';
+    if(typeof v==='number') return String(+v.toPrecision(15));
+    if(typeof v==='boolean') return v?'TRUE':'FALSE';
+    return String(v);
+  }
+  function rank(v){ return typeof v==='number'?0:(typeof v==='string'?1:2); }
+  function cmp(op,a,b){
+    if(Array.isArray(a)||Array.isArray(b)) throw new Error('array');
+    if(a===null) a=(typeof b==='string')?'':(typeof b==='boolean'?false:0);
+    if(b===null) b=(typeof a==='string')?'':(typeof a==='boolean'?false:0);
+    var d;
+    if(rank(a)!==rank(b)) d=rank(a)-rank(b);
+    else if(typeof a==='string'){ var x=a.toLowerCase(), y=b.toLowerCase(); d=x<y?-1:(x>y?1:0); }
+    else d=(+a)-(+b);
+    switch(op){ case '=':return d===0; case '<>':return d!==0; case '<':return d<0; case '>':return d>0; case '<=':return d<=0; default:return d>=0; }
+  }
+  function truthy(v){
+    if(Array.isArray(v)) throw new Error('array');
+    if(v===null) return false;
+    if(typeof v==='boolean') return v;
+    if(typeof v==='number') return v!==0;
+    var t=String(v).toUpperCase();
+    if(t==='TRUE') return true;
+    if(t==='FALSE') return false;
+    throw vErr('#VALUE!');
+  }
+  function range(a,b){
+    var x=U.decode_range(a+':'+b);
+    var r0=Math.min(x.s.r,x.e.r), r1=Math.max(x.s.r,x.e.r), c0=Math.min(x.s.c,x.e.c), c1=Math.max(x.s.c,x.e.c);
+    if((r1-r0+1)*(c1-c0+1)>200000) throw new Error('big');
+    var out=[];
+    for(var r=r0;r<=r1;r++) for(var c=c0;c<=c1;c++) out.push(cellVal(addrOf(r,c)));
+    return out;
+  }
+  function collect(args){
+    var out=[];
+    for(var i=0;i<args.length;i++){
+      var a=args[i], v=ev(a);
+      if(Array.isArray(v)){ for(var j=0;j<v.length;j++) if(typeof v[j]==='number') out.push(v[j]); }
+      else if(a.k==='ref'){ if(typeof v==='number') out.push(v); }
+      else out.push(num(v));
+    }
+    return out;
+  }
+  function sum(a){ var s=0; for(var i=0;i<a.length;i++) s+=a[i]; return s; }
+  function fn(n){
+    var A=n.args;
+    switch(n.n){
+      case 'IF': { var cnd=truthy(ev(A[0])); if(cnd) return A.length>1?ev(A[1]):true; return A.length>2?ev(A[2]):false; }
+      case 'SUM': return sum(collect(A));
+      case 'AVERAGE': { var a1=collect(A); if(!a1.length) throw vErr('#DIV/0!'); return sum(a1)/a1.length; }
+      case 'MIN': { var a2=collect(A); if(!a2.length) return 0; var mn=a2[0]; for(var i=1;i<a2.length;i++) if(a2[i]<mn) mn=a2[i]; return mn; }
+      case 'MAX': { var a3=collect(A); if(!a3.length) return 0; var mx=a3[0]; for(var j=1;j<a3.length;j++) if(a3[j]>mx) mx=a3[j]; return mx; }
+      case 'COUNT': return collect(A).length;
+      case 'ABS': return Math.abs(num(ev(A[0])));
+      case 'ROUND': {
+        var x=num(ev(A[0])), d=A.length>1?Math.trunc(num(ev(A[1]))):0, f=Math.pow(10,d);
+        return Math.sign(x)*Math.round(Math.abs(x)*f+1e-9)/f;
+      }
+      default: throw new Error('unsupported fn');
+    }
+  }
+  function ev(n){
+    switch(n.k){
+      case 'lit': return n.v;
+      case 'ref': return cellVal(n.a);
+      case 'range': return range(n.a,n.b);
+      case 'pct': return num(ev(n.x))/100;
+      case 'un': { var v=num(ev(n.x)); return n.op==='-'?-v:v; }
+      case 'fn': return fn(n);
+      case 'bin': {
+        var a=ev(n.l), b=ev(n.r), res;
+        switch(n.op){
+          case '+': return num(a)+num(b);
+          case '-': return num(a)-num(b);
+          case '*': return num(a)*num(b);
+          case '/': { var dv=num(b); if(dv===0) throw vErr('#DIV/0!'); return num(a)/dv; }
+          case '^': res=Math.pow(num(a),num(b)); if(!isFinite(res)) throw vErr('#NUM!'); return res;
+          case '&': return str(a)+str(b);
+          default: return cmp(n.op,a,b);
+        }
+      }
+    }
+    throw new Error('node');
+  }
+  return ev;
+}
+function setComputed(cell,val){
+  if(val===null||val===undefined) val=0;
+  if(typeof val==='number'){
+    if(!isFinite(val)){ cell.t='e'; cell.v=36; cell.w='#NUM!'; return; }
+    cell.t='n'; cell.v=val;
+    cell.w = cell.z ? safeFmt(cell.z,val) : String(+val.toPrecision(12));
+  } else if(typeof val==='boolean'){
+    cell.t='b'; cell.v=val; cell.w=val?'TRUE':'FALSE';
+  } else {
+    cell.t='s'; cell.v=String(val); cell.w=String(val);
+  }
+}
+function recalc(onlyMissing){
+  var s=curSheet();
+  unsup=0;
+  var keys=Object.keys(s).filter(function(k){ return k.charAt(0)!=='!' && s[k] && s[k].f; });
+  if(!keys.length) return;
+  var memo=new Map(), stack=new Set();
+  var ev;
+  function cellVal(a){
+    var cell=s[a];
+    if(!cell) return null;
+    if(!cell.f){
+      if(cell.t==='e') throw {err:cell.w||'#VALUE!'};
+      return (cell.v===undefined)?null:cell.v;
+    }
+    if(memo.has(a)){ var m=memo.get(a); if(m.err) throw m.err; return m.v; }
+    if(stack.has(a)) throw {err:'#REF!'};
+    stack.add(a);
+    var res;
+    try{ res={v:ev(parseF(cell.f))}; }
+    catch(e){
+      if(e && e.err) res={err:e};
+      else { unsup++; res={v:(cell.v===undefined?null:cell.v), keep:true}; }
+    }
+    stack.delete(a);
+    memo.set(a,res);
+    if(res.err) throw res.err;
+    return res.v;
+  }
+  ev=makeEval(cellVal);
+  keys.forEach(function(k){ try{ cellVal(k); }catch(e){} });
+  keys.forEach(function(k){
+    var res=memo.get(k), cell=s[k];
+    if(!res || res.keep) return;
+    if(onlyMissing && cell.v!==undefined) return;
+    if(res.err){ cell.t='e'; cell.v=ERR[res.err.err]||15; cell.w=res.err.err; }
+    else setComputed(cell,res.v);
+  });
+}
+
+/* adjust unqualified references in a formula after inserting/deleting a row or column */
+function adjFormula(f,ax,idx,n){
+  var re=/("(?:[^"]|"")*")|(?<![A-Za-z0-9_.!$])(\$?)([A-Za-z]{1,3})(\$?)(\d+)(?::(\$?)([A-Za-z]{1,3})(\$?)(\d+))?(?![A-Za-z0-9_(!.])/g;
+  return f.replace(re,function(m,str,d1,c1,d2,r1,d3,c2,d4,r2){
+    if(str) return str;
+    function adj(t,role){
+      if(n>0) return t>=idx?t+1:t;
+      if(role==='single') return t>idx?t-1:(t===idx?null:t);
+      if(role==='start') return t>idx?t-1:t;
+      return t>=idx?Math.max(t-1,0):t;
+    }
+    function one(dc,c,dr,r,role){
+      var ci=U.decode_col(c.toUpperCase()), ri=parseInt(r,10)-1, x;
+      if(ax==='c'){ x=adj(ci,role); if(x===null) return null; ci=x; }
+      else { x=adj(ri,role); if(x===null) return null; ri=x; }
+      return dc+U.encode_col(ci)+dr+(ri+1);
+    }
+    if(c2===undefined){ var s1=one(d1,c1,d2,r1,'single'); return s1===null?'#REF!':s1; }
+    return one(d1,c1,d2,r1,'start')+':'+one(d3,c2,d4,r2,'end');
+  });
+}
+
+/* ---------- cell styles (read with ExcelJS, kept per cell as an index into xstab) ---------- */
+var DEFTHEME=['FFFFFF','000000','E7E6E6','44546A','4472C4','ED7D31','A5A5A5','FFC000','5B9BD5','70AD47','0563C1','954F72'];
+var INDEXED=['000000','FFFFFF','FF0000','00FF00','0000FF','FFFF00','FF00FF','00FFFF','000000','FFFFFF','FF0000','00FF00','0000FF','FFFF00','FF00FF','00FFFF','800000','008000','000080','808000','800080','008080','C0C0C0','808080','9999FF','993366','FFFFCC','CCFFFF','660066','FF8080','0066CC','CCCCFF','000080','FF00FF','FFFF00','00FFFF','800080','800000','008080','0000FF','00CCFF','CCFFFF','CCFFCC','FFFF99','99CCFF','FF99CC','CC99FF','FFCC99','3366FF','33CCCC','99CC00','FFCC00','FF9900','FF6600','666699','969696','003366','339966','003300','333300','993300','993366','333399','333333'];
+var BW={thin:'1px solid',hair:'1px dotted',dotted:'1px dotted',dashed:'1px dashed',dashDot:'1px dashed',dashDotDot:'1px dashed',mediumDashed:'2px dashed',mediumDashDot:'2px dashed',mediumDashDotDot:'2px dashed',slantDashDot:'2px dashed',medium:'2px solid',thick:'3px solid',double:'3px double'};
+function readTheme(xw){
+  themeHex=null;
+  try{
+    var t=xw._themes, xml=t && (t.theme1 || t[Object.keys(t)[0]]);
+    if(typeof xml!=='string') return;
+    var names=['lt1','dk1','lt2','dk2','accent1','accent2','accent3','accent4','accent5','accent6','hlink','folHlink'], out=[];
+    for(var i=0;i<names.length;i++){
+      var m=xml.match(new RegExp('<a:'+names[i]+'>[\\s\\S]*?(?:srgbClr val="([0-9A-Fa-f]{6})"|lastClr="([0-9A-Fa-f]{6})")'));
+      out.push(m ? (m[1]||m[2]).toUpperCase() : DEFTHEME[i]);
+    }
+    themeHex=out;
+  }catch(e){ themeHex=null; }
+}
+function lum(hex){
+  return (0.299*parseInt(hex.substr(0,2),16)+0.587*parseInt(hex.substr(2,2),16)+0.114*parseInt(hex.substr(4,2),16))/255;
+}
+function tintHex(hex,tint){
+  var r=parseInt(hex.substr(0,2),16)/255, g=parseInt(hex.substr(2,2),16)/255, b=parseInt(hex.substr(4,2),16)/255;
+  var mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, h=0, sat=0, d=mx-mn;
+  if(d){
+    sat = l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    if(mx===r) h=(g-b)/d+(g<b?6:0); else if(mx===g) h=(b-r)/d+2; else h=(r-g)/d+4;
+    h/=6;
+  }
+  l = tint<0 ? l*(1+tint) : l*(1-tint)+tint;
+  function f(p,q,t){ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6) return p+(q-p)*6*t; if(t<1/2) return q; if(t<2/3) return p+(q-p)*(2/3-t)*6; return p; }
+  var rr,gg,bb;
+  if(!sat){ rr=gg=bb=l; }
+  else { var q=l<0.5 ? l*(1+sat) : l+sat-l*sat, pp=2*l-q; rr=f(pp,q,h+1/3); gg=f(pp,q,h); bb=f(pp,q,h-1/3); }
+  return [rr,gg,bb].map(function(x){ var v=Math.round(Math.max(0,Math.min(1,x))*255).toString(16); return v.length<2?'0'+v:v; }).join('').toUpperCase();
+}
+function colorHex(c){
+  if(!c) return null;
+  var hex=null;
+  if(c.argb) hex=String(c.argb).slice(-6);
+  else if(c.theme!==undefined){ var pal=themeHex||DEFTHEME; hex=pal[c.theme]; if(hex && c.tint) hex=tintHex(hex,c.tint); }
+  else if(c.indexed!==undefined) hex=INDEXED[c.indexed]||null;
+  if(!hex || !/^[0-9A-Fa-f]{6}$/.test(hex)) return null;
+  return hex.toUpperCase();
+}
+function normStyle(cs){
+  var o={}, f=cs.font, ft, fc, fl, bg, bd, bo, al, ao;
+  if(f){
+    ft={};
+    if(f.bold) ft.b=1; if(f.italic) ft.i=1; if(f.underline) ft.u=1; if(f.strike) ft.s=1;
+    if(f.size) ft.sz=f.size; if(f.name) ft.n=String(f.name);
+    fc=colorHex(f.color); if(fc) ft.c=fc;
+    if(Object.keys(ft).length) o.f=ft;
+  }
+  fl=cs.fill;
+  if(fl && fl.type==='pattern' && fl.pattern==='solid'){ bg=colorHex(fl.fgColor); if(bg) o.bg=bg; }
+  bd=cs.border;
+  if(bd){
+    bo={};
+    ['top','left','bottom','right'].forEach(function(sd){ var b=bd[sd]; if(b && b.style) bo[sd]={s:b.style,c:colorHex(b.color)||'000000'}; });
+    if(Object.keys(bo).length) o.b=bo;
+  }
+  al=cs.alignment;
+  if(al){
+    ao={};
+    if(al.horizontal) ao.h=al.horizontal; if(al.vertical) ao.v=al.vertical; if(al.wrapText) ao.w=1; if(al.indent) ao.i=al.indent;
+    if(Object.keys(ao).length) o.a=ao;
+  }
+  if(cs.numFmt && cs.numFmt!=='General') o.z=cs.numFmt;
+  return Object.keys(o).length ? o : null;
+}
+function internStyle(o){
+  var key=JSON.stringify(o), i=xsmap.get(key);
+  if(i===undefined){ i=xstab.length; xstab.push(o); xsmap.set(key,i); }
+  return i;
+}
+function loadStyles(book,buf){
+  xstab=[]; xsmap=new Map(); xscss=[]; themeHex=null;
+  if(!window.ExcelJS) return Promise.resolve(false);
+  var xw=new ExcelJS.Workbook();
+  return xw.xlsx.load(buf).then(function(){
+    readTheme(xw);
+    xw.eachSheet(function(ws){
+      var s=book.Sheets[ws.name]; if(!s) return;
+      var vw=ws.views && ws.views[0];
+      if(vw){
+        if(vw.state==='frozen' && (vw.xSplit||vw.ySplit)) s['!freeze']={c:vw.xSplit||0,r:vw.ySplit||0};
+        if(vw.showGridLines===false) s['!nogrid']=1;
+      }
+      var df=ws.properties && ws.properties.defaultColWidth;
+      s['!defw']=df ? Math.round(df*7+5) : 64;
+      s['!fx']=1;
+      var cw=[], rw=[];
+      (ws.columns||[]).forEach(function(col,i){
+        if(col && (col.width||col.hidden)) cw[i]={wpx:col.width?Math.round(col.width*7+5):undefined,hidden:!!col.hidden};
+      });
+      if(cw.length) s['!cols']=cw;
+      ws.eachRow({includeEmpty:true},function(row,rn){
+        if(row.height||row.hidden) rw[rn-1]={hpt:row.height||undefined,hpx:row.height?Math.round(row.height*4/3):undefined,hidden:!!row.hidden};
+        row.eachCell({includeEmpty:true},function(cell,cn){
+          var o=normStyle(cell.style||{}); if(!o) return;
+          var a=addrOf(rn-1,cn-1), cur=s[a];
+          if(cur) cur.xi=internStyle(o);
+          else if(o.bg||o.b){ s[a]={t:'z',xi:internStyle(o)}; extendRef(s,rn-1,cn-1); }
+        });
+      });
+      if(rw.length) s['!rows']=rw;
+    });
+    return true;
+  }).catch(function(){ xstab=[]; xsmap=new Map(); xscss=[]; return false; });
+}
+function inkVar(hex){ return lum(hex)<0.12 ? 'var(--fg)' : '#'+hex; }
+function bcss(side,b){ return 'border-'+side+':'+(BW[b.s]||'1px solid')+' '+inkVar(b.c)+';'; }
+function bAt(s,r,c,side){
+  var x=s[addrOf(r,c)]; if(!x || x.xi===undefined) return null;
+  var o=xstab[x.xi]; return (o && o.b && o.b[side]) || null;
+}
+function bordersCss(s,r,c,rs,cs){
+  var css='', rt=bAt(s,r,c+cs-1,'right')||bAt(s,r,c+cs,'left'), bt=bAt(s,r+rs-1,c,'bottom')||bAt(s,r+rs,c,'top');
+  if(rt) css+=bcss('right',rt);
+  if(bt) css+=bcss('bottom',bt);
+  if(c===0){ var lf=bAt(s,r,c,'left'); if(lf) css+=bcss('left',lf); }
+  if(r===0){ var tp=bAt(s,r,c,'top'); if(tp) css+=bcss('top',tp); }
+  return css;
+}
+function cellCss(xi){
+  if(xscss[xi]!==undefined) return xscss[xi];
+  var o=xstab[xi], css='', f=o.f, a=o.a, col=null;
+  if(o.bg) css+='background-color:#'+o.bg+';';
+  if(f){
+    if(f.b) css+='font-weight:700;';
+    if(f.i) css+='font-style:italic;';
+    if(f.u||f.s) css+='text-decoration:'+(f.u?'underline':'')+(f.u&&f.s?' ':'')+(f.s?'line-through':'')+';';
+    if(f.sz) css+='font-size:'+(Math.round(f.sz*4/3*10)/10)+'px;';
+    if(f.n) css+="font-family:'"+f.n.replace(/['"\\;<>]/g,'')+"','Noto Sans TC',system-ui,sans-serif;";
+    col=f.c||null;
+  }
+  if(col) css+='color:'+((!o.bg && lum(col)<0.15)?'var(--fg)':'#'+col)+';';
+  else if(o.bg) css+='color:#000;';
+  if(a){
+    var hm={left:'left',center:'center',right:'right',justify:'justify',fill:'left',centerContinuous:'center',distributed:'center'};
+    var vm={top:'top',middle:'middle',center:'middle',bottom:'bottom',distributed:'middle',justify:'middle'};
+    if(a.h && hm[a.h]) css+='text-align:'+hm[a.h]+';';
+    if(a.v && vm[a.v]) css+='vertical-align:'+vm[a.v]+';';
+    if(a.w) css+='white-space:normal;overflow-wrap:anywhere;text-overflow:clip;';
+    if(a.i) css+='padding-left:'+(7+a.i*9)+'px;';
+  }
+  xscss[xi]=css;
+  return css;
+}
+function styleOut(xc,o,z){
+  if(z && z!=='General') xc.numFmt=z; else if(o && o.z) xc.numFmt=o.z;
+  if(!o) return;
+  if(o.f){
+    var f={};
+    if(o.f.n) f.name=o.f.n; if(o.f.sz) f.size=o.f.sz;
+    if(o.f.b) f.bold=true; if(o.f.i) f.italic=true; if(o.f.u) f.underline=true; if(o.f.s) f.strike=true;
+    if(o.f.c) f.color={argb:'FF'+o.f.c};
+    xc.font=f;
+  }
+  if(o.bg) xc.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF'+o.bg}};
+  if(o.b){
+    var b={};
+    ['top','left','bottom','right'].forEach(function(sd){ if(o.b[sd]) b[sd]={style:o.b[sd].s,color:{argb:'FF'+o.b[sd].c}}; });
+    xc.border=b;
+  }
+  if(o.a){
+    var al={};
+    if(o.a.h) al.horizontal=o.a.h; if(o.a.v) al.vertical=o.a.v; if(o.a.w) al.wrapText=true; if(o.a.i) al.indent=o.a.i;
+    xc.alignment=al;
+  }
+}
+function buildXlsx(){
+  if(!window.ExcelJS){
+    var out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    return Promise.resolve(new Blob([out],{type:XLSX_MIME}));
+  }
+  var X=new ExcelJS.Workbook();
+  wb.SheetNames.forEach(function(name){
+    var s=wb.Sheets[name], vw={showGridLines:!s['!nogrid']}, fz=s['!freeze'];
+    if(fz && (fz.r||fz.c)){ vw.state='frozen'; vw.xSplit=fz.c||0; vw.ySplit=fz.r||0; }
+    var ws=X.addWorksheet(name.replace(/[\\\/\?\*\[\]:]/g,'_').slice(0,31),{views:[vw]});
+    (s['!cols']||[]).forEach(function(o,i){
+      if(!o) return;
+      var col=ws.getColumn(i+1);
+      col.width=Math.max(1,(colW(o,s['!defw'])-5)/7);
+      if(o.hidden) col.hidden=true;
+    });
+    (s['!rows']||[]).forEach(function(o,i){
+      if(!o) return;
+      var hpt=o.hpt || (o.hpx ? o.hpx*0.75 : 0);
+      if(hpt) ws.getRow(i+1).height=hpt;
+      if(o.hidden) ws.getRow(i+1).hidden=true;
+    });
+    Object.keys(s).forEach(function(k){
+      if(k.charAt(0)==='!') return;
+      var cell=s[k], a=U.decode_cell(k), xc=ws.getCell(a.r+1,a.c+1);
+      if(cell.f){
+        var res;
+        if(cell.t==='e') res={error:cell.w||'#VALUE!'}; else if(cell.v!==undefined) res=cell.v;
+        xc.value = (res===undefined) ? {formula:cell.f} : {formula:cell.f,result:res};
+      }
+      else if(cell.t==='n'||cell.t==='b') xc.value=cell.v;
+      else if(cell.t==='s') xc.value=String(cell.v);
+      else if(cell.t==='e') xc.value={error:cell.w||'#VALUE!'};
+      styleOut(xc, cell.xi!==undefined ? xstab[cell.xi] : null, cell.z);
+    });
+    (s['!merges']||[]).forEach(function(m){
+      try{ ws.mergeCells(m.s.r+1,m.s.c+1,m.e.r+1,m.e.c+1); }catch(e){}
+    });
+  });
+  return X.xlsx.writeBuffer().then(function(buf){ return new Blob([buf],{type:XLSX_MIME}); });
+}
+
+/* ---------- sheet view ---------- */
+function ensureView(name){
+  var s=wb.Sheets[name], v=view[name];
+  var rg = s['!ref'] ? U.decode_range(s['!ref']) : {e:{r:-1,c:-1}};
+  if(!v){
+    v={rows:Math.max(rg.e.r+1+5,30), cols:Math.min(MAXC,Math.max(rg.e.c+1+2,12)), limit:300};
+    view[name]=v;
+  } else {
+    v.rows=Math.max(v.rows,rg.e.r+1);
+    v.cols=Math.min(MAXC,Math.max(v.cols,rg.e.c+1));
+  }
+  return v;
+}
+function colW(o,def){
+  var w=def||96;
+  if(o){
+    if(o.wpx) w=o.wpx;
+    else if(o.wch) w=o.wch*7.2+5;
+    else if(o.width) w=o.width*7.2+5;
+  }
+  return Math.max(14,Math.min(500,Math.round(w)));
+}
+function extendRef(s,r,c){
+  var rg = s['!ref'] ? U.decode_range(s['!ref']) : {s:{r:0,c:0},e:{r:r,c:c}};
+  rg.s.r=Math.min(rg.s.r,r,0); rg.s.c=Math.min(rg.s.c,c,0);
+  rg.e.r=Math.max(rg.e.r,r); rg.e.c=Math.max(rg.e.c,c);
+  s['!ref']=U.encode_range(rg);
+}
+function recomputeRef(s){
+  var mr=-1, mc=-1;
+  Object.keys(s).forEach(function(k){
+    if(k.charAt(0)==='!') return;
+    var a=U.decode_cell(k); if(a.r>mr) mr=a.r; if(a.c>mc) mc=a.c;
+  });
+  if(mr<0) delete s['!ref']; else s['!ref']=U.encode_range({s:{r:0,c:0},e:{r:mr,c:mc}});
+}
+
+/* ---------- rendering ---------- */
+function render(){
+  var s=curSheet(), v=ensureView(cur);
+  var rowsShown=Math.min(v.rows,v.limit);
+  var tl={}, hid={};
+  (s['!merges']||[]).forEach(function(m){
+    tl[m.s.r+','+m.s.c]=m;
+    var r1=Math.min(m.e.r,rowsShown-1), c1=Math.min(m.e.c,v.cols-1);
+    for(var r=m.s.r;r<=r1;r++) for(var c=m.s.c;c<=c1;c++) if(r!==m.s.r||c!==m.s.c) hid[r+','+c]=1;
+  });
+  var cols=s['!cols']||[], rowsArr=s['!rows']||[], defw=s['!defw'];
+  var fz=s['!freeze'], fc=fz?Math.min(fz.c||0,v.cols):0, fr=fz?Math.min(fz.r||0,rowsShown):0;
+  var total=46, colLeft=[], rowTop=[], rowHs=[], acc=20, h='<colgroup><col style="width:46px">', c, r;
+  for(c=0;c<v.cols;c++){ var w=colW(cols[c],defw); colLeft[c]=total; total+=w; h+='<col style="width:'+w+'px">'; }
+  for(r=0;r<rowsShown;r++){
+    var ro=rowsArr[r], hh=20;
+    if(ro){ if(ro.hpx) hh=ro.hpx; else if(ro.hpt) hh=ro.hpt*4/3; }
+    hh=Math.max(14,Math.round(hh)); rowHs[r]=hh; rowTop[r]=acc; acc+=hh;
+  }
+  h+='</colgroup><thead><tr style="height:20px"><th class="corner"></th>';
+  for(c=0;c<v.cols;c++) h+='<th class="ch" data-c="'+c+'">'+U.encode_col(c)+'</th>';
+  h+='</tr></thead><tbody>';
+  for(r=0;r<rowsShown;r++){
+    h+='<tr style="height:'+rowHs[r]+'px"><th class="rh" data-r="'+r+'"'+(r<fr?' style="top:'+rowTop[r]+'px;z-index:3"':'')+'>'+(r+1)+'</th>';
+    for(c=0;c<v.cols;c++){
+      var key=r+','+c;
+      if(hid[key]) continue;
+      var cell=s[addrOf(r,c)], cls='', span='', rs=1, cs=1;
+      if(cell){
+        if(cell.t==='e') cls='x';
+        else if(cell.t==='n') cls=(cell.v===undefined&&cell.f)?'p':'n';
+        else if(cell.t==='b') cls='b';
+        else if(cell.f && cell.v===undefined) cls='p';
+      }
+      var m=tl[key];
+      if(m){
+        rs=Math.min(m.e.r,rowsShown-1)-m.s.r+1; cs=Math.min(m.e.c,v.cols-1)-m.s.c+1;
+        if(rs>1) span+=' rowspan="'+rs+'"';
+        if(cs>1) span+=' colspan="'+cs+'"';
+      }
+      var st='';
+      if(cell && cell.xi!==undefined) st+=cellCss(cell.xi);
+      if(xstab.length && s['!fx']) st+=bordersCss(s,r,c,rs,cs);
+      if(c<fc||r<fr){
+        st+='position:sticky;z-index:'+((c<fc&&r<fr)?3:(c<fc?2:1))+';';
+        if(c<fc) st+='left:'+colLeft[c]+'px;';
+        if(r<fr) st+='top:'+rowTop[r]+'px;';
+        if(c===fc-1) st+='border-right:2px solid var(--line-strong);';
+        if(r===fr-1) st+='border-bottom:2px solid var(--line-strong);';
+      }
+      h+='<td data-r="'+r+'" data-c="'+c+'"'+(cls?' class="'+cls+'"':'')+span+(st?' style="'+esc(st)+'"':'')+'>'+esc(display(cell))+'</td>';
+    }
+    h+='</tr>';
+  }
+  h+='</tbody>';
+  el.grid.style.width=total+'px';
+  el.grid.className=(s['!fx']?'fx':'')+(s['!nogrid']?' ng':'');
+  el.grid.innerHTML=h;
+  if(rowsShown<v.rows){
+    el.more.innerHTML='<button class="btn more" id="more" type="button">顯示更多列(目前 '+rowsShown+' / '+v.rows+')</button>';
+  } else el.more.innerHTML='';
+  applySel(false);
+  updateStatus();
+  el.undo.disabled=!undoStack.length;
+}
+function renderTabs(){
+  el.tabs.innerHTML='';
+  wb.SheetNames.forEach(function(n){
+    var b=document.createElement('button');
+    b.type='button'; b.className='tab'; b.textContent=n; b.setAttribute('role','tab');
+    if(n===cur) b.setAttribute('aria-current','true');
+    b.onclick=function(){ if(n!==cur) switchSheet(n); };
+    el.tabs.appendChild(b);
+  });
+  var add=document.createElement('button');
+  add.type='button'; add.className='tab'; add.textContent='+'; add.title='新增工作表'; add.setAttribute('aria-label','新增工作表');
+  add.onclick=addSheet;
+  el.tabs.appendChild(add);
+}
+function renderAll(){
+  el.name.textContent=fileName||'—';
+  el.dirty.hidden=!dirty;
+  renderTabs();
+  render();
+}
+function tdAt(r,c){ return el.grid.querySelector('td[data-r="'+r+'"][data-c="'+c+'"]'); }
+function applySel(scroll){
+  if(statusTimer){ clearTimeout(statusTimer); statusTimer=null; }
+  el.grid.querySelectorAll('.sel,.on,.rg').forEach(function(x){ x.classList.remove('sel','on','rg','rt','rb','rl','rr'); });
+  var b=bounds(), multi=(b.r0!==b.r1||b.c0!==b.c1);
+  var body=el.grid.tBodies[0], head=el.grid.tHead, i, j;
+  if(body){
+    for(i=b.r0;i<=b.r1 && i<body.rows.length;i++){
+      var row=body.rows[i];
+      row.cells[0].classList.add('on');
+      if(!multi) continue;
+      for(j=1;j<row.cells.length;j++){
+        var cell=row.cells[j], cc=+cell.dataset.c;
+        if(cc<b.c0||cc>b.c1) continue;
+        cell.classList.add('rg');
+        if(i===b.r0) cell.classList.add('rt');
+        if(i===b.r1) cell.classList.add('rb');
+        if(cc===b.c0) cell.classList.add('rl');
+        if(cc===b.c1) cell.classList.add('rr');
+      }
+    }
+  }
+  if(head){
+    var hc=head.rows[0].cells;
+    for(j=b.c0;j<=b.c1 && j+1<hc.length;j++) hc[j+1].classList.add('on');
+  }
+  var td=tdAt(sel.r,sel.c);
+  if(td) td.classList.add('sel');
+  if(scroll){ var tf=tdAt(ext.r,ext.c); if(tf) tf.scrollIntoView({block:'nearest',inline:'nearest'}); }
+  el.addr.textContent = multi ? addrOf(b.r0,b.c0)+':'+addrOf(b.r1,b.c1) : addrOf(sel.r,sel.c);
+  el.fx.value=raw(curSheet()[addrOf(sel.r,sel.c)]);
+  fxOrig=el.fx.value;
+  updateStatus();
+}
+function fmtNum(x){ return String(+Number(x).toPrecision(12)); }
+function cellsInRange(b){
+  var s=curSheet(), out=[];
+  Object.keys(s).forEach(function(k){
+    if(k.charAt(0)==='!') return;
+    var a=U.decode_cell(k);
+    if(a.r>=b.r0&&a.r<=b.r1&&a.c>=b.c0&&a.c<=b.c1) out.push(a);
+  });
+  return out;
+}
+function selSummary(b){
+  var s=curSheet(), n=0, cnt=0, sum=0;
+  cellsInRange(b).forEach(function(a){
+    var cell=s[addrOf(a.r,a.c)];
+    if(cell.v!==undefined && cell.v!==''){ n++; if(cell.t==='n'){ cnt++; sum+=cell.v; } }
+  });
+  var t='已選取 '+(b.r1-b.r0+1)+' 列 × '+(b.c1-b.c0+1)+' 欄(有內容 '+n+' 格)';
+  if(cnt) t+=' · 總和 '+fmtNum(sum)+' · 平均 '+fmtNum(sum/cnt);
+  return t;
+}
+function updateStatus(){
+  if(statusTimer) return;
+  var s=curSheet(), txt='', sb=bounds();
+  if(sb.r0!==sb.r1||sb.c0!==sb.c1){ el.status.textContent=selSummary(sb); return; }
+  if(s['!ref']){ var rg=U.decode_range(s['!ref']); txt=(rg.e.r+1)+' 列 × '+(rg.e.c+1)+' 欄 · '; }
+  txt+='雙擊儲存格或按 Enter 編輯 · 拖曳或 Shift+方向鍵可選取多格';
+  if(unsup) txt+=' · '+unsup+' 個公式含未支援的函數,畫面顯示原有數值(用 Excel 開啟會重新計算)';
+  el.status.textContent=txt;
+}
+function setStatus(msg){
+  el.status.textContent=msg;
+  if(statusTimer) clearTimeout(statusTimer);
+  statusTimer=setTimeout(function(){ statusTimer=null; updateStatus(); },5000);
+}
+function showNote(text,actions){
+  el.note.innerHTML='';
+  var sp=document.createElement('span'); sp.textContent=text; el.note.appendChild(sp);
+  (actions||[{label:'知道了'}]).forEach(function(a){
+    var b=document.createElement('button');
+    b.type='button'; b.className='btn'+(a.primary?' primary':''); b.textContent=a.label;
+    b.onclick=function(){ el.note.hidden=true; if(a.fn) a.fn(); };
+    el.note.appendChild(b);
+  });
+  el.note.hidden=false;
+}
+function markDirty(){ dirty=true; el.dirty.hidden=false; }
+function markClean(){ dirty=false; el.dirty.hidden=true; }
+
+/* ---------- editing ---------- */
+function pushUndo(u){ undoStack.push(u); if(undoStack.length>100) undoStack.shift(); }
+function applyEdits(edits){
+  var s=curSheet(), v=ensureView(cur), items=[], changed=false;
+  edits.forEach(function(e){
+    var r=e[0], c=e[1], text=e[2];
+    if(c>=MAXC) return;
+    var a=addrOf(r,c), prev=s[a];
+    if(text===raw(prev)) return;
+    items.push([a, prev?clone(prev):null]);
+    var parsed=parseInput(text,prev);
+    if(!parsed){ if(prev && prev.xi!==undefined) s[a]={t:'z',xi:prev.xi}; else delete s[a]; }
+    else {
+      if(prev && prev.s) parsed.s=prev.s;
+      if(prev && prev.xi!==undefined){
+        parsed.xi=prev.xi;
+        if(parsed.t==='n' && !parsed.z && xstab[prev.xi] && xstab[prev.xi].z) parsed.z=xstab[prev.xi].z;
+      }
+      finalize(parsed); s[a]=parsed; extendRef(s,r,c);
+    }
+    if(r>=v.rows) v.rows=r+1;
+    if(c>=v.cols) v.cols=c+1;
+    changed=true;
+  });
+  if(changed){ pushUndo({k:'cells',sheet:cur,items:items}); recalc(false); markDirty(); }
+  render();
+}
+function commitFx(){
+  if(fxCell && el.fx.value!==fxOrig){
+    var p=fxCell; fxCell=null;
+    applyEdits([[p.r,p.c,el.fx.value]]);
+  }
+  fxCell=null;
+}
+function bounds(){
+  return {r0:Math.min(sel.r,ext.r), r1:Math.max(sel.r,ext.r), c0:Math.min(sel.c,ext.c), c1:Math.max(sel.c,ext.c)};
+}
+function select(r,c){
+  commitFx();
+  var v=ensureView(cur);
+  sel={r:r,c:c}; ext={r:r,c:c};
+  if(r>=v.limit){ v.limit=r+200; render(); }
+  else applySel(true);
+}
+function extendTo(r,c){
+  commitFx();
+  var v=ensureView(cur);
+  ext={r:Math.max(0,Math.min(v.rows-1,r)), c:Math.max(0,Math.min(v.cols-1,c))};
+  if(ext.r>=v.limit){ v.limit=ext.r+200; render(); }
+  else applySel(true);
+}
+function selectAll(){
+  commitFx();
+  var s=curSheet(), v=ensureView(cur), er=v.rows-1, ec=v.cols-1;
+  if(s['!ref']){ var rg=U.decode_range(s['!ref']); er=rg.e.r; ec=rg.e.c; }
+  sel={r:0,c:0}; ext={r:er,c:ec};
+  applySel(false);
+}
+function selectCols(c0,c1){ commitFx(); var v=ensureView(cur); sel={r:0,c:c0}; ext={r:v.rows-1,c:c1}; applySel(false); }
+function selectRows(r0,r1){ commitFx(); var v=ensureView(cur); sel={r:r0,c:0}; ext={r:r1,c:v.cols-1}; applySel(false); }
+function clearRange(){
+  var cs=cellsInRange(bounds());
+  if(!cs.length) return;
+  applyEdits(cs.map(function(a){ return [a.r,a.c,'']; }));
+  setStatus('已清除 '+cs.length+' 個儲存格');
+}
+function move(dr,dc){
+  var v=ensureView(cur);
+  if(dr>0 && sel.r>=v.rows-1){ v.rows+=20; render(); }
+  if(dc>0 && sel.c>=v.cols-1 && v.cols<MAXC){ v.cols+=1; render(); }
+  select(Math.max(0,Math.min(v.rows-1,sel.r+dr)), Math.max(0,Math.min(v.cols-1,sel.c+dc)));
+}
+function startEdit(r,c,initial){
+  if(editing) return;
+  var td=tdAt(r,c); if(!td) return;
+  var orig=raw(curSheet()[addrOf(r,c)]);
+  editing={r:r,c:c,td:td,orig:orig};
+  td.classList.add('editing');
+  try{ td.contentEditable='plaintext-only'; }catch(e){}
+  if(td.contentEditable!=='plaintext-only') td.contentEditable='true';
+  td.textContent = initial!==undefined ? initial : orig;
+  td.focus();
+  var rg=document.createRange(); rg.selectNodeContents(td); rg.collapse(false);
+  var sl=window.getSelection(); sl.removeAllRanges(); sl.addRange(rg);
+}
+function endEdit(commit){
+  if(!editing) return;
+  var e=editing, text=e.td.textContent.replace(/\r?\n/g,' ');
+  editing=null;
+  e.td.contentEditable='false';
+  e.td.classList.remove('editing');
+  if(commit) applyEdits([[e.r,e.c,text]]); else render();
+  el.wrap.focus({preventScroll:true});
+}
+function undo(){
+  var u=undoStack.pop(); if(!u || !wb.Sheets[u.sheet]) { render(); return; }
+  if(editing) endEdit(false);
+  if(u.k==='cells'){
+    var s=wb.Sheets[u.sheet];
+    for(var i=u.items.length-1;i>=0;i--){ var it=u.items[i]; if(it[1]) s[it[0]]=it[1]; else delete s[it[0]]; }
+  } else { wb.Sheets[u.sheet]=u.snap; view[u.sheet]=u.view; }
+  if(cur!==u.sheet){ cur=u.sheet; renderTabs(); }
+  ext={r:sel.r,c:sel.c};
+  recalc(false); markDirty(); render();
+}
+
+/* ---------- insert / delete rows and columns ---------- */
+function snapshot(s){ return (typeof structuredClone==='function') ? structuredClone(s) : clone(s); }
+function adjMerges(s,ax,idx,n){
+  if(!s['!merges']) return;
+  var out=[];
+  s['!merges'].forEach(function(m){
+    var a=m.s[ax], b=m.e[ax];
+    if(n>0){ if(a>=idx){ a++; b++; } else if(b>=idx){ b++; } }
+    else {
+      if(a===idx && b===idx) return;
+      if(a>idx){ a--; b--; } else if(b>=idx){ b--; }
+    }
+    var o={s:{r:m.s.r,c:m.s.c},e:{r:m.e.r,c:m.e.c}};
+    o.s[ax]=a; o.e[ax]=b;
+    if(o.s.r===o.e.r && o.s.c===o.e.c) return;
+    out.push(o);
+  });
+  s['!merges']=out;
+}
+function shiftOnce(s,v,ax,idx,n){
+  var keys=Object.keys(s).filter(function(k){ return k.charAt(0)!=='!'; });
+  var moved={};
+  keys.forEach(function(k){
+    var cell=s[k]; delete s[k];
+    var a=U.decode_cell(k), p=(ax==='r')?a.r:a.c;
+    if(n>0){ if(p>=idx) p++; }
+    else { if(p===idx) return; if(p>idx) p--; }
+    var na={r:a.r,c:a.c}; na[ax]=p;
+    moved[U.encode_cell(na)]=cell;
+  });
+  Object.keys(moved).forEach(function(k){
+    var cell=moved[k];
+    if(cell.f) cell.f=adjFormula(cell.f,ax,idx,n);
+    s[k]=cell;
+  });
+  adjMerges(s,ax,idx,n);
+  if(ax==='c'){
+    var cols=s['!cols'];
+    if(cols){ if(n>0) cols.splice(idx,0,{wpx:96}); else cols.splice(idx,1); }
+    v.cols=Math.max(1,Math.min(MAXC,v.cols+n));
+  } else {
+    var rows=s['!rows'];
+    if(rows){ if(n>0) rows.splice(idx,0,{}); else rows.splice(idx,1); }
+    v.rows=Math.max(1,v.rows+n);
+  }
+}
+function structural(ax,idx,count,n){
+  if(editing) endEdit(true);
+  commitFx();
+  var s=curSheet(), v=ensureView(cur), total=(ax==='r')?v.rows:v.cols;
+  if(n<0){ if(total<=1) return; count=Math.min(count,total-1); }
+  pushUndo({k:'sheet',sheet:cur,snap:snapshot(s),view:{rows:v.rows,cols:v.cols,limit:v.limit}});
+  for(var i=0;i<count;i++) shiftOnce(s,v,ax,idx,n);
+  recomputeRef(s);
+  if(sel.r>=v.rows) sel.r=v.rows-1;
+  if(sel.c>=v.cols) sel.c=v.cols-1;
+  ext={r:sel.r,c:sel.c};
+  recalc(false); markDirty(); render();
+  setStatus((n>0?'已插入 ':'已刪除 ')+count+(ax==='r'?' 列':' 欄'));
+}
+
+/* ---------- sheets / files ---------- */
+function switchSheet(name){
+  if(editing) endEdit(true);
+  commitFx();
+  cur=name; sel={r:0,c:0}; ext={r:0,c:0};
+  recalc(true);
+  renderTabs(); render();
+}
+function addSheet(){
+  if(editing) endEdit(true);
+  var i=wb.SheetNames.length+1, name;
+  do { name='工作表'+(i++); } while(wb.SheetNames.indexOf(name)>=0);
+  U.book_append_sheet(wb,U.aoa_to_sheet([[]]),name);
+  markDirty();
+  switchSheet(name);
+}
+function install(book,name,kind){
+  wb=book; fileName=name; cur=book.SheetNames[0]; view={}; undoStack=[]; sel={r:0,c:0}; ext={r:0,c:0}; editing=null;
+  markClean();
+  recalc(true);
+  el.note.hidden=true;
+  if(kind==='styled') showNote('已載入原有格式(顏色、字型、框線、欄寬列高、合併儲存格、凍結窗格)。儲存時會連同格式一併保留;圖表、圖片、條件式格式和資料驗證不會保留。');
+  else if(kind==='csv'||kind==='blank') { /* nothing to warn about */ }
+  else if(/^(xlsx|xlsm|xltx|xltm)$/.test(kind)) showNote('讀不到這個檔案的外觀格式,只載入了資料和公式。');
+  else showNote('這種檔案格式只讀取到資料,不含顏色、字型等外觀格式。儲存時會存成 .xlsx。');
+  renderAll();
+  el.wrap.focus({preventScroll:true});
+}
+function fixCsv(book){
+  book.SheetNames.forEach(function(n){
+    var s=book.Sheets[n];
+    Object.keys(s).forEach(function(k){
+      if(k.charAt(0)==='!') return;
+      var cell=s[k];
+      if(cell.t!=='s') return;
+      var p=parseInput(String(cell.v));
+      if(p && p.t==='n' && p.f===undefined){ cell.t='n'; cell.v=p.v; finalize(cell); }
+    });
+  });
+}
+function loadFile(file){
+  setStatus('讀取中…');
+  return file.arrayBuffer().then(function(buf){
+    var ext=(file.name.split('.').pop()||'').toLowerCase();
+    var isText=(ext==='csv'||ext==='tsv'||ext==='txt'), book;
+    if(isText){
+      var text;
+      try{ text=new TextDecoder('utf-8',{fatal:true}).decode(buf); }
+      catch(e){ text=new TextDecoder('big5').decode(buf); }
+      book=XLSX.read(text,{type:'string',raw:true});
+      fixCsv(book);
+    } else {
+      book=XLSX.read(buf,{type:'array',cellNF:true,cellFormula:true});
+    }
+    if(!book.SheetNames.length) throw new Error('empty');
+    var isX=!isText && /^(xlsx|xlsm|xltx|xltm)$/.test(ext);
+    var stylesP=isX ? loadStyles(book,buf) : Promise.resolve(false);
+    return stylesP.then(function(ok){
+      install(book,file.name,isText?'csv':(ok?'styled':ext));
+      setStatus('已開啟 '+file.name);
+    });
+  }).catch(function(){
+    setStatus('無法開啟這個檔案。請確認是 Excel 或 CSV 檔(有密碼保護的檔案不支援)。');
+  });
+}
+function guard(fn){
+  if(!dirty){ fn(); return; }
+  showNote('目前的檔案有未儲存的修改,繼續會捨棄這些修改。',[{label:'繼續',primary:true,fn:fn},{label:'取消'}]);
+}
+function newBlank(){
+  var book=U.book_new();
+  U.book_append_sheet(book,U.aoa_to_sheet([[]]),'工作表1');
+  install(book,'未命名.xlsx','blank');
+  el.note.hidden=true;
+}
+function makeSample(){
+  var money='#,##0.00';
+  var s=U.aoa_to_sheet([
+    ['項目','類別','數量','單價 (HKD)','小計 (HKD)'],
+    ['影印紙','文具',10,38],['墨水盒','文具',4,215],['訂書機','文具',6,29],
+    ['茶包','茶水間',12,46],['咖啡豆','茶水間',3,168],['清潔劑','清潔',5,32]
+  ]);
+  for(var r=2;r<=7;r++){
+    s['D'+r].z=money; s['D'+r].w=safeFmt(money,s['D'+r].v);
+    s['E'+r]={t:'n',f:'C'+r+'*D'+r,z:money};
+  }
+  s['A8']={t:'s',v:'合計'};
+  s['E8']={t:'n',f:'SUM(E2:E7)',z:money};
+  s['!ref']='A1:E8';
+  s['!cols']=[{wpx:120},{wpx:90},{wpx:70},{wpx:120},{wpx:130}];
+  xstab=[]; xsmap=new Map(); xscss=[]; themeHex=null;
+  var hd=internStyle({f:{b:1,c:'FFFFFF'},bg:'1C7A4B',a:{h:'center',v:'middle'}});
+  ['A1','B1','C1','D1','E1'].forEach(function(k){ s[k].xi=hd; });
+  var tot=internStyle({f:{b:1},bg:'E3F1E9',b:{top:{s:'medium',c:'1C7A4B'}}});
+  ['A8','E8'].forEach(function(k){ s[k].xi=tot; });
+  ['B8','C8','D8'].forEach(function(k){ s[k]={t:'z',xi:tot}; });
+  s['!fx']=1; s['!defw']=64; s['!freeze']={r:1,c:0};
+  s['!rows']=[{hpx:28}];
+  var book=U.book_new();
+  U.book_append_sheet(book,s,'本月開支');
+  return book;
+}
+
+/* ---------- saving ---------- */
+function nativeSave(req){
+  var filename=req.filename, data=req.data;
+  var blob = (data instanceof Blob) ? data : new Blob([data],{type:'text/csv;charset=utf-8'});
+  var ext=(filename.split('.').pop()||'').toLowerCase();
+  if(window.showSaveFilePicker){
+    var accept={}; accept[ext==='csv' ? 'text/csv' : XLSX_MIME]=['.'+ext];
+    var opts={suggestedName:filename, types:[{description: ext==='csv' ? 'CSV 檔' : 'Excel 活頁簿', accept:accept}]};
+    if(fileHandle) opts.startIn=fileHandle;
+    return window.showSaveFilePicker(opts).then(function(h){
+      return h.createWritable().then(function(w){
+        return w.write(blob).then(function(){ return w.close(); });
+      }).then(function(){ return {status:'saved',picker:true,name:h.name}; });
+    }).catch(function(e){
+      if(e && e.name==='AbortError') throw {code:'declined',message:'已取消'};
+      throw e;
+    });
+  }
+  var url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(url); },4000);
+  return Promise.resolve({status:'saved',picker:false,name:filename});
+}
+function saveErr(e){
+  var code=e&&e.code;
+  if(code==='declined') setStatus('已取消儲存');
+  else if(code==='rate_limited') setStatus('操作太頻繁,請稍後再試');
+  else setStatus('儲存失敗:'+((e&&e.message)||'未知原因'));
+}
+function saveXlsx(){
+  if(!dl) return;
+  if(editing) endEdit(true);
+  commitFx();
+  var name=baseName()+'.xlsx';
+  setStatus('產生檔案中…');
+  buildXlsx().then(function(blob){
+    return dl.save({filename:name,data:blob});
+  }).then(function(r){
+    markClean();
+    if(r && r.picker){ if(r.name){ fileName=r.name; el.name.textContent=fileName; } setStatus('已儲存 '+(r.name||name)); }
+    else setStatus('已下載 '+name+'(請到瀏覽器的下載位置查看)');
+  }).catch(function(e){
+    if(e && e.code) saveErr(e); else setStatus('產生檔案時出錯:'+((e&&e.message)||'未知原因'));
+  });
+}
+function saveCsv(){
+  if(!dl) return;
+  if(editing) endEdit(true);
+  commitFx();
+  var s=curSheet();
+  if(!s['!ref']){ setStatus('這個工作表是空白的,沒有內容可匯出'); return; }
+  var csv=U.sheet_to_csv(s);
+  var name=baseName()+(wb.SheetNames.length>1?'_'+cur:'')+'.csv';
+  dl.save({filename:name,data:'﻿'+csv})
+    .then(function(){ setStatus('已匯出 '+name); })
+    .catch(saveErr);
+}
+
+/* ---------- clipboard ---------- */
+function parseTSV(t){
+  var rows=[], row=[], cell='', q=false, i, ch;
+  for(i=0;i<t.length;i++){
+    ch=t[i];
+    if(q){ if(ch==='"'){ if(t[i+1]==='"'){ cell+='"'; i++; } else q=false; } else cell+=ch; }
+    else if(ch==='"' && cell===''){ q=true; }
+    else if(ch==='\t'){ row.push(cell); cell=''; }
+    else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&t[i+1]==='\n') i++; row.push(cell); rows.push(row); row=[]; cell=''; }
+    else cell+=ch;
+  }
+  if(cell!==''||row.length){ row.push(cell); rows.push(row); }
+  return rows;
+}
+function rangeText(){
+  var b=bounds(), s=curSheet(), rg=s['!ref']?U.decode_range(s['!ref']):null;
+  var r1=rg?Math.max(b.r0,Math.min(b.r1,rg.e.r)):b.r0;
+  var c1=rg?Math.max(b.c0,Math.min(b.c1,rg.e.c)):b.c0;
+  var rows=[], r, c;
+  for(r=b.r0;r<=r1;r++){
+    var line=[];
+    for(c=b.c0;c<=c1;c++){
+      var t=display(s[addrOf(r,c)]);
+      if(/[\t\r\n"]/.test(t)) t='"'+t.replace(/"/g,'""')+'"';
+      line.push(t);
+    }
+    rows.push(line.join('\t'));
+  }
+  return rows.join('\n');
+}
+function pasteBlock(text){
+  var rows=parseTSV(text);
+  if(!rows.length) return;
+  var b=bounds(), edits=[], v=ensureView(cur), r, c;
+  if(rows.length===1 && rows[0].length===1 && (b.r0!==b.r1||b.c0!==b.c1)){
+    var r1=Math.min(b.r1,v.rows-1);
+    if((r1-b.r0+1)*(b.c1-b.c0+1)>20000){ setStatus('選取範圍太大,無法一次貼上'); return; }
+    for(r=b.r0;r<=r1;r++) for(c=b.c0;c<=b.c1;c++) edits.push([r,c,rows[0][0]]);
+  } else {
+    var wmax=0;
+    rows.forEach(function(row,i){ wmax=Math.max(wmax,row.length); row.forEach(function(val,j){ edits.push([b.r0+i,b.c0+j,val]); }); });
+    sel={r:b.r0,c:b.c0};
+    ext={r:b.r0+rows.length-1,c:Math.min(MAXC-1,b.c0+wmax-1)};
+  }
+  applyEdits(edits);
+  setStatus('已貼上 '+edits.length+' 個儲存格');
+}
+
+/* ---------- events ---------- */
+function pointCell(x,y){
+  var t=document.elementFromPoint(x,y);
+  if(!t || !el.grid.contains(t)) return null;
+  var td=t.closest('td');
+  if(td) return {r:+td.dataset.r,c:+td.dataset.c};
+  var th=t.closest('th');
+  if(th){
+    if(th.dataset.c!==undefined) return {c:+th.dataset.c};
+    if(th.dataset.r!==undefined) return {r:+th.dataset.r};
+  }
+  return null;
+}
+function updateDrag(p){
+  if(!drag) return;
+  var v=ensureView(cur), ne=null, ns=null;
+  if(drag.mode==='cell'){
+    if(p.r!==undefined||p.c!==undefined) ne={r:(p.r!==undefined?p.r:ext.r), c:(p.c!==undefined?p.c:ext.c)};
+  } else if(drag.mode==='col'){
+    if(p.c!==undefined){ ns={r:0,c:drag.a}; ne={r:v.rows-1,c:p.c}; }
+  } else if(p.r!==undefined){
+    ns={r:drag.a,c:0}; ne={r:p.r,c:v.cols-1};
+  }
+  if(!ne) return;
+  if(ne.r===ext.r && ne.c===ext.c && (!ns || (ns.r===sel.r && ns.c===sel.c))) return;
+  if(ns) sel=ns;
+  ext=ne;
+  applySel(false);
+}
+function dragStep(auto){
+  if(!drag || !lastPt) return;
+  var rect=el.wrap.getBoundingClientRect(), x=lastPt.x, y=lastPt.y;
+  if(auto){
+    var dx=0, dy=0;
+    if(y<rect.top+34) dy=-Math.min(40,(rect.top+34-y)/2+4);
+    else if(y>rect.bottom-20) dy=Math.min(40,(y-(rect.bottom-20))/2+4);
+    if(x<rect.left+54) dx=-Math.min(40,(rect.left+54-x)/2+4);
+    else if(x>rect.right-20) dx=Math.min(40,(x-(rect.right-20))/2+4);
+    if(dx||dy){ el.wrap.scrollTop+=dy; el.wrap.scrollLeft+=dx; }
+  }
+  var cx=Math.max(rect.left+54,Math.min(rect.right-18,x));
+  var cy=Math.max(rect.top+34,Math.min(rect.bottom-18,y));
+  var p=pointCell(cx,cy);
+  if(p) updateDrag(p);
+}
+function startDrag(d,e){
+  drag=d; lastPt={x:e.clientX,y:e.clientY};
+  if(dragTimer) clearInterval(dragTimer);
+  dragTimer=setInterval(function(){ dragStep(true); },40);
+}
+function stopDrag(){
+  drag=null;
+  if(dragTimer){ clearInterval(dragTimer); dragTimer=null; }
+}
+el.grid.addEventListener('mousedown',function(e){
+  if(e.button!==0) return;
+  var td=e.target.closest('td');
+  if(td){
+    if(editing && editing.td===td) return;
+    if(editing) endEdit(true);
+    e.preventDefault();
+    el.wrap.focus({preventScroll:true});
+    var r=+td.dataset.r, c=+td.dataset.c;
+    if(e.shiftKey) extendTo(r,c); else select(r,c);
+    startDrag({mode:'cell'},e);
+    return;
+  }
+  var th=e.target.closest('th');
+  if(!th) return;
+  if(editing) endEdit(true);
+  e.preventDefault();
+  el.wrap.focus({preventScroll:true});
+  if(th.classList.contains('corner')){ selectAll(); return; }
+  if(th.dataset.c!==undefined){
+    var c2=+th.dataset.c, a1=e.shiftKey?sel.c:c2;
+    selectCols(a1,c2); startDrag({mode:'col',a:a1},e);
+  } else if(th.dataset.r!==undefined){
+    var r2=+th.dataset.r, a2=e.shiftKey?sel.r:r2;
+    selectRows(a2,r2); startDrag({mode:'row',a:a2},e);
+  }
+});
+document.addEventListener('mousemove',function(e){
+  if(!drag) return;
+  if(e.buttons===0){ stopDrag(); return; }
+  lastPt={x:e.clientX,y:e.clientY};
+  dragStep(false);
+});
+document.addEventListener('mouseup',stopDrag);
+window.addEventListener('blur',stopDrag);
+el.grid.addEventListener('dblclick',function(e){
+  var td=e.target.closest('td'); if(!td || editing) return;
+  select(+td.dataset.r,+td.dataset.c);
+  startEdit(sel.r,sel.c);
+});
+el.grid.addEventListener('focusout',function(e){
+  if(editing && e.target===editing.td) endEdit(true);
+});
+el.more.addEventListener('click',function(e){
+  if(e.target.id!=='more') return;
+  var v=ensureView(cur); v.limit+=500; render();
+});
+el.wrap.addEventListener('keydown',function(e){
+  if(editing){
+    if(e.target!==editing.td || e.isComposing || e.keyCode===229) return;
+    if(e.key==='Enter'){ e.preventDefault(); endEdit(true); move(e.shiftKey?-1:1,0); }
+    else if(e.key==='Tab'){ e.preventDefault(); endEdit(true); move(0,e.shiftKey?-1:1); }
+    else if(e.key==='Escape'){ e.preventDefault(); endEdit(false); }
+    return;
+  }
+  if(e.target!==el.wrap) return;
+  var v=ensureView(cur), mod=e.ctrlKey||e.metaKey, b0=bounds();
+  if(mod && (e.key==='a'||e.key==='A')){ e.preventDefault(); selectAll(); return; }
+  if(e.key===' ' && mod){ e.preventDefault(); selectCols(b0.c0,b0.c1); return; }
+  if(e.key===' ' && e.shiftKey){ e.preventDefault(); selectRows(b0.r0,b0.r1); return; }
+  switch(e.key){
+    case 'ArrowUp': if(e.shiftKey) extendTo(ext.r-1,ext.c); else move(-1,0); break;
+    case 'ArrowDown': if(e.shiftKey) extendTo(ext.r+1,ext.c); else move(1,0); break;
+    case 'ArrowLeft': if(e.shiftKey) extendTo(ext.r,ext.c-1); else move(0,-1); break;
+    case 'ArrowRight': if(e.shiftKey) extendTo(ext.r,ext.c+1); else move(0,1); break;
+    case 'Tab': move(0,e.shiftKey?-1:1); break;
+    case 'Home': if(e.shiftKey) extendTo(ext.r,0); else select(sel.r,0); break;
+    case 'End': if(e.shiftKey) extendTo(ext.r,v.cols-1); else select(sel.r,v.cols-1); break;
+    case 'Enter': case 'F2': startEdit(sel.r,sel.c); break;
+    case 'Delete': case 'Backspace': clearRange(); break;
+    default:
+      if(e.key.length===1 && !e.ctrlKey && !e.metaKey && !e.altKey){ startEdit(sel.r,sel.c,e.key); break; }
+      return;
+  }
+  e.preventDefault();
+});
+document.addEventListener('keydown',function(e){
+  var mod=e.ctrlKey||e.metaKey;
+  if(mod && (e.key==='s'||e.key==='S')){ e.preventDefault(); saveXlsx(); }
+  else if(mod && (e.key==='z'||e.key==='Z') && !e.shiftKey && document.activeElement!==el.fx && !editing){ e.preventDefault(); undo(); }
+});
+document.addEventListener('copy',function(e){
+  if(editing || document.activeElement===el.fx) return;
+  e.clipboardData.setData('text/plain',rangeText());
+  e.preventDefault();
+});
+document.addEventListener('cut',function(e){
+  if(editing || document.activeElement===el.fx) return;
+  e.clipboardData.setData('text/plain',rangeText());
+  e.preventDefault();
+  clearRange();
+});
+document.addEventListener('paste',function(e){
+  if(document.activeElement===el.fx) return;
+  var text=(e.clipboardData||window.clipboardData).getData('text');
+  if(editing){ e.preventDefault(); document.execCommand('insertText',false,text.replace(/\r?\n/g,' ')); return; }
+  if(document.activeElement!==el.wrap) return;
+  e.preventDefault();
+  pasteBlock(text);
+});
+el.fx.addEventListener('focus',function(){ fxCell={r:sel.r,c:sel.c}; fxOrig=el.fx.value; });
+el.fx.addEventListener('blur',commitFx);
+el.fx.addEventListener('keydown',function(e){
+  if(e.isComposing||e.keyCode===229) return;
+  if(e.key==='Enter'){ e.preventDefault(); var r=sel.r; commitFx(); el.wrap.focus({preventScroll:true}); select(Math.min(r+1,ensureView(cur).rows-1),sel.c); }
+  else if(e.key==='Escape'){ e.preventDefault(); el.fx.value=fxOrig; fxCell=null; el.wrap.focus({preventScroll:true}); }
+});
+$('btnOpen').addEventListener('click',function(){ el.picker.click(); });
+$('btnNew').addEventListener('click',function(){ guard(newBlank); });
+el.picker.addEventListener('change',function(){
+  var f=el.picker.files[0]; el.picker.value=''; fileHandle=null;
+  if(f) guard(function(){ loadFile(f); });
+});
+el.save.addEventListener('click',saveXlsx);
+el.csv.addEventListener('click',saveCsv);
+el.undo.addEventListener('click',undo);
+document.querySelector('.tools').addEventListener('click',function(e){
+  var b=e.target.closest('[data-act]'); if(!b) return;
+  var q=bounds();
+  switch(b.dataset.act){
+    case 'insRow': structural('r',q.r0,q.r1-q.r0+1,1); break;
+    case 'delRow': structural('r',q.r0,q.r1-q.r0+1,-1); break;
+    case 'insCol': structural('c',q.c0,q.c1-q.c0+1,1); break;
+    case 'delCol': structural('c',q.c0,q.c1-q.c0+1,-1); break;
+  }
+  el.wrap.focus({preventScroll:true});
+});
+['dragenter','dragover'].forEach(function(t){
+  el.app.addEventListener(t,function(e){
+    if(e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types,'Files')>=0){ e.preventDefault(); el.wrap.classList.add('drop'); }
+  });
+});
+el.app.addEventListener('dragleave',function(e){ if(!el.app.contains(e.relatedTarget)) el.wrap.classList.remove('drop'); });
+el.app.addEventListener('drop',function(e){
+  e.preventDefault(); el.wrap.classList.remove('drop');
+  var f=e.dataTransfer.files && e.dataTransfer.files[0]; fileHandle=null;
+  if(f) guard(function(){ loadFile(f); });
+});
+
+/* ---------- boot ---------- */
+wb=makeSample(); fileName='範例_本月開支.xlsx'; cur=wb.SheetNames[0];
+recalc(true);
+renderAll();
+showNote('這是範例資料。按「開啟檔案」載入你的 Excel,顏色、字型、框線等格式會一併顯示和保留;也可以直接把檔案拖放到表格上。');
+
+dl={save:nativeSave};
+el.save.disabled=false; el.csv.disabled=false;
+window.addEventListener('beforeunload',function(e){ if(dirty){ e.preventDefault(); e.returnValue=''; } });
+if('launchQueue' in window && window.launchQueue && window.launchQueue.setConsumer){
+  window.launchQueue.setConsumer(function(params){
+    if(!params || !params.files || !params.files.length) return;
+    var h=params.files[0];
+    h.getFile().then(function(f){ fileHandle=h; return loadFile(f); });
+  });
+}
+if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  navigator.serviceWorker.register('sw.js').catch(function(){});
+}
+})();
+</script>
+</body>
+</html>
