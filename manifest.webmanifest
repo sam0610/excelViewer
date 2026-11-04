@@ -2,7 +2,7 @@
   "name": "Excel 編輯器",
   "short_name": "Excel 編輯器",
   "description": "開啟、編輯 Excel 和 CSV 檔,保留原有格式",
-  "id": "./",
+  "id": "/excelViewer/",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
