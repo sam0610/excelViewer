@@ -13,7 +13,7 @@
 
 ## 使用
 
-網址(開啟 GitHub Pages 後):<https://sam0610.github.io/excelviewer/>
+網址(開啟 GitHub Pages 後):<https://sam0610.github.io/excelViewer/>
 
 或者喺本機行:
 
